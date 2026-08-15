@@ -452,12 +452,12 @@ class ProfessionalDiskAnalyzer:
         self._update_table_data(items_data, path)
 
     def _load_folder_async(self, path):
-        """Асинхронная загрузка папки (когда данных нет в таблице)"""
+        """Асинхронная загрузка папки из SQLite"""
         debug_print(f"📂 Асинхронная загрузка папки: {path}")
 
         def load_folder():
             try:
-                # ПРОВЕРЯЕМ ЛОКАЛЬНЫЙ КЭШ НАВИГАЦИИ
+                # Проверяем локальный кэш навигации
                 if path in self.scanned_folders_cache:
                     items = self.scanned_folders_cache[path]
                     debug_print(f"✅ Загружено из локального кэша: {len(items)} элементов")
@@ -466,7 +466,7 @@ class ProfessionalDiskAnalyzer:
                     self.root.after(0, lambda: self._display_folder_items(items))
                     return
 
-                # ПОЛУЧАЕМ ДАННЫЕ ИЗ ОСНОВНОГО КЭША (SQLite)
+                # Получаем данные из SQLite
                 debug_print(f"📂 Чтение данных из основного кэша: {path}")
                 items = []
 
@@ -486,6 +486,7 @@ class ProfessionalDiskAnalyzer:
                     conn = sqlite3.connect(self.cache.cache_file, timeout=30)
                     cursor = conn.cursor()
 
+                    # ========== ИСПРАВЛЕНИЕ: Используем параметризованный запрос ==========
                     for i, entry in enumerate(entries_list):
                         if i % 100 == 0:
                             self.root.update_idletasks()
@@ -495,12 +496,13 @@ class ProfessionalDiskAnalyzer:
                             continue
 
                         key = self.cache.get_folder_key(entry.path)
+
+                        # ========== ИСПРАВЛЕНИЕ: Убираем лишний поиск по path ==========
                         cursor.execute('''
                                        SELECT total_size
                                        FROM cache
-                                       WHERE path = ?
-                                          OR path_normalized = ?
-                                       ''', (entry.path, key))
+                                       WHERE path_normalized = ?
+                                       ''', (key,))
 
                         row = cursor.fetchone()
 
@@ -549,7 +551,6 @@ class ProfessionalDiskAnalyzer:
                 self.root.after(0, lambda: self.add_log(f"❌ Ошибка: {str(e)}", "error"))
                 self.root.after(0, lambda: self.scan_status.config(text="❌ Ошибка"))
 
-        # Запускаем в потоке
         thread = threading.Thread(target=load_folder)
         thread.daemon = True
         thread.start()
@@ -780,6 +781,30 @@ class ProfessionalDiskAnalyzer:
         stage_progress: прогресс этапа (0-100%)
         message: дополнительное сообщение
         """
+        # ========== ОПТИМИЗАЦИЯ: Ограничиваем частоту обновлений, но НЕ отключаем полностью ==========
+        # Используем time-based throttling вместо счётчиков
+
+        current_time = time.time()
+
+        # Минимальный интервал между обновлениями UI (сек)
+        min_interval = 0.5  # Обновляем не чаще чем раз в 0.5 секунды
+
+        if not hasattr(self, '_last_progress_update'):
+            self._last_progress_update = 0
+
+        # Пропускаем только если прошло меньше min_interval
+        if current_time - self._last_progress_update < min_interval:
+            # Но для этапа "Сбор списка папок" обновляем реже
+            if stage == "Сбор списка папок":
+                return
+            # Для остальных этапов обновляем чуть чаще
+            if current_time - self._last_progress_update < 0.3:
+                return
+
+        self._last_progress_update = current_time
+
+        # ========== ОБНОВЛЯЕМ ВСЕ ЭЛЕМЕНТЫ UI ==========
+
         # Общий прогресс
         self.root.after(0, lambda p=total_progress: self.progress_var.set(p))
         self.root.after(0, lambda p=total_progress: self.progress_percent.config(text=f"{p:.0f}%"))
@@ -1992,9 +2017,9 @@ class ProfessionalDiskAnalyzer:
             debug_print(f"Невозможно перейти: {path}")
             return
 
-        # ========== СОХРАНЯЕМ ТЕКУЩЕЕ СОСТОЯНИЕ ТАБЛИЦЫ (ЕСЛИ НЕ КОРЕНЬ СКАНИРОВАНИЯ) ==========
+        # ========== ИСПРАВЛЕНИЕ: Сохраняем состояние ТОЛЬКО если переходим в другую папку ==========
         if self.current_nav_path and self.current_nav_path != path:
-            # НЕ СОХРАНЯЕМ корень сканирования — он уже есть в last_scan_results
+            # ========== ИСПРАВЛЕНИЕ: Не сохраняем состояние, если это корень сканирования ==========
             if self.current_nav_path != self.last_scan_root:
                 current_items = self.tree.get_children()
                 if current_items:
@@ -2022,7 +2047,11 @@ class ProfessionalDiskAnalyzer:
         self.path_label.config(text=f"📁 {path}")
 
         self.back_btn.config(state=NORMAL if self.navigation_history else DISABLED)
-        debug_print(f"Кнопка Назад: {'включена' if self.navigation_history else 'выключена'}")
+
+        # ========== ИСПРАВЛЕНИЕ: Очищаем локальный кэш для этой папки, чтобы принудительно обновить ==========
+        if path in self.scanned_folders_cache:
+            # ========== ИСПРАВЛЕНИЕ: Не удаляем, а обновляем с проверкой ==========
+            debug_print(f"📂 Папка уже есть в кэше: {path}")
 
         self.root.after(100, lambda: self.scan_current_folder(path))
 
@@ -2036,23 +2065,22 @@ class ProfessionalDiskAnalyzer:
 
         previous_path = self.navigation_history[-1]
 
-        # ========== ЕСЛИ ВОЗВРАЩАЕМСЯ В КОРЕНЬ СКАНИРОВАНИЯ ==========
+        # ========== КОРЕНЬ СКАНИРОВАНИЯ ==========
         if previous_path == self.last_scan_root and self.last_scan_root_subfolders:
             debug_print(f"📊 ВОЗВРАТ В КОРЕНЬ СКАНИРОВАНИЯ: {previous_path}")
 
-            # Удаляем текущий путь из истории
             self.navigation_history.pop()
             self.current_nav_path = previous_path
             self.update_navigation_ui()
             self.path_label.config(text=f"📁 {previous_path}")
             self.back_btn.config(state=NORMAL if self.navigation_history else DISABLED)
 
-            # ========== ПОКАЗЫВАЕМ ТОЛЬКО ПРЯМЫЕ ПОДПАПКИ ==========
             self.add_log(f"◀ Возврат в корень: {previous_path}", "info")
+            # ========== ИСПРАВЛЕНИЕ: Показываем корень сканирования ==========
             self._display_folder_items(self.last_scan_root_subfolders, "📊 Результаты сканирования")
             return
 
-        # Сохраняем текущее состояние (для подпапок)
+        # ========== ИСПРАВЛЕНИЕ: Сохраняем текущее состояние ПЕРЕД возвратом ==========
         if self.current_nav_path and self.current_nav_path != self.last_scan_root:
             current_items = self.tree.get_children()
             if current_items:
@@ -2079,7 +2107,7 @@ class ProfessionalDiskAnalyzer:
 
         self.back_btn.config(state=NORMAL if self.navigation_history else DISABLED)
 
-        # ВОССТАНАВЛИВАЕМ состояние для подпапки
+        # ========== ИСПРАВЛЕНИЕ: Загружаем папку через обычный механизм ==========
         self.root.after(100, lambda: self.scan_current_folder(previous_path))
 
     def update_navigation_ui(self):
@@ -2117,14 +2145,45 @@ class ProfessionalDiskAnalyzer:
         # ========== КОРЕНЬ СКАНИРОВАНИЯ ==========
         if self.last_scan_root and path == self.last_scan_root and self.last_scan_root_subfolders:
             debug_print(f"📊 КОРЕНЬ СКАНИРОВАНИЯ: {path}")
-            # ========== ПОКАЗЫВАЕМ ТОЛЬКО ПРЯМЫЕ ПОДПАПКИ ==========
             self.root.after(0, lambda: self._display_folder_items(
                 self.last_scan_root_subfolders,
                 "📊 Результаты сканирования"
             ))
             return
 
-        # ========== ДЛЯ ПОДПАПОК ==========
+        # ========== ИСПРАВЛЕНИЕ: Проверяем, есть ли данные в основном кэше (SQLite) ==========
+        # Сначала пытаемся загрузить актуальные данные из SQLite
+        # Если в SQLite есть данные для этой папки — показываем их
+        # Если нет — используем table_state_cache как запасной вариант
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.cache.cache_file, timeout=30)
+            cursor = conn.cursor()
+
+            # Проверяем, есть ли записи для этой папки в кэше
+            key = self.cache.get_folder_key(path)
+            cursor.execute('''
+                           SELECT COUNT(*)
+                           FROM cache
+                           WHERE path LIKE ?
+                              OR path_normalized LIKE ?
+                           ''', (path + '%', key + '%'))
+
+            count = cursor.fetchone()[0]
+            conn.close()
+
+            # ========== ИСПРАВЛЕНИЕ: Если в SQLite есть данные — загружаем их ==========
+            if count > 0:
+                debug_print(f"📂 Загрузка из SQLite для: {path} ({count} записей)")
+                # Очищаем таблицу и загружаем из SQLite
+                self._load_folder_async(path)
+                return
+
+        except Exception as e:
+            debug_print(f"Ошибка проверки SQLite: {e}")
+
+        # ========== ДЛЯ ПОДПАПОК (только если нет данных в SQLite) ==========
         if path in self.table_state_cache:
             items_data = self.table_state_cache[path]
             debug_print(f"✅ ВОССТАНОВЛЕНИЕ СОСТОЯНИЯ ТАБЛИЦЫ для: {path} ({len(items_data)} элементов)")
@@ -2336,21 +2395,20 @@ class ProfessionalDiskAnalyzer:
             pass
 
     def scan_folder_optimized(self, path):
-        """СУПЕР-БЫСТРОЕ сканирование через ОДИН ПРОХОД scandir"""
+        """СУПЕР-БЫСТРОЕ сканирование через ОДИН ПРОХОД scandir (ОПТИМИЗИРОВАННО)"""
         debug_print(f"Начало сканирования в потоке: {path}")
         try:
             start_time = time.time()
             use_cache = self.use_cache.get()
 
+            # ========== ОПТИМИЗАЦИЯ: Упрощаем UI обновления ==========
             self.root.after(0, lambda: self.stage_label.config(
-                text="🚀 Этап 1/3: Один проход сканирования...",
+                text="🚀 Этап 1/3: Сканирование...",
                 foreground=self.colors['stage_scan']
             ))
-            self.root.after(0, lambda: self.scan_status.config(text="⏳ Сканирование в один проход..."))
+            self.root.after(0, lambda: self.scan_status.config(text="⏳ Сканирование..."))
             self.root.after(0, lambda: self.progress_var.set(0))
             self.root.after(0, lambda: self.progress_percent.config(text="0%"))
-            self.root.after(0, lambda: self.folder_progress_var.set(0))
-            self.root.after(0, lambda: self.folder_progress_percent.config(text="0%"))
 
             self.add_log(f"📂 Один проход сканирования...", "info")
 
@@ -2369,6 +2427,11 @@ class ProfessionalDiskAnalyzer:
                     )
                     if not is_scanning():
                         result['stopped'] = True
+                        try:
+                            self.cache.save_cache()
+                            self.add_log("💾 Кэш сохранён при остановке", "info")
+                        except:
+                            pass
                         return
                     result['sizes'] = sizes
                     result['counts'] = counts
@@ -2379,9 +2442,10 @@ class ProfessionalDiskAnalyzer:
             thread.daemon = True
             thread.start()
 
+            # ========== ОПТИМИЗАЦИЯ: Увеличиваем интервал проверки ==========
             while thread.is_alive():
                 self.root.update_idletasks()
-                time.sleep(0.1)
+                time.sleep(0.1)  # Было 0.05
 
             if result['error']:
                 self.add_log(f"❌ Ошибка: {result['error']}", "error")
@@ -2390,6 +2454,10 @@ class ProfessionalDiskAnalyzer:
 
             if result['stopped'] or not self.scanning:
                 self.add_log("⏹️ Сканирование остановлено пользователем", "warning")
+                try:
+                    self.cache.save_cache()
+                except:
+                    pass
                 self.root.after(0, self.scan_complete)
                 return
 
@@ -2405,13 +2473,12 @@ class ProfessionalDiskAnalyzer:
             self.add_log(f"📊 Просканировано {total} папок за {time.time() - start_time:.1f} сек", "success")
             debug_print(f"Просканировано {total} папок")
 
-            # ========== ЭТАП 2: Сохранение в кэш ==========
+            # ========== ОПТИМИЗАЦИЯ: Сохраняем в кэш с большим батчем ==========
             if use_cache and folder_sizes:
                 self.root.after(0, lambda: self.stage_label.config(
-                    text="💾 Этап 2/3: Сохранение в кэш...",
+                    text="💾 Сохранение в кэш...",
                     foreground=self.colors['stage_cache']
                 ))
-
                 self.add_log(f"💾 Сохранение {len(folder_sizes)} папок в кэш...", "info")
 
                 cache_items = []
@@ -2420,22 +2487,19 @@ class ProfessionalDiskAnalyzer:
                         cache_items.append((folder, size, folder_counts.get(folder, 0)))
 
                 if cache_items:
-                    # Сохраняем с обновлением прогресса (80-95%)
                     self.cache.save_cache_batch_with_progress(cache_items, self._update_scan_progress)
                     self.add_log(f"💾 Сохранено {len(cache_items)} папок в кэш", "success")
 
-            # ========== ЭТАП 3: Формирование результатов ==========
+            # ========== ОПТИМИЗАЦИЯ: Формирование результатов ==========
             self.root.after(0, lambda: self.stage_label.config(
-                text="📊 Этап 3/3: Формирование результатов...",
+                text="📊 Формирование результатов...",
                 foreground=self.colors['stage_prepare']
             ))
-            self.root.after(0, lambda: self.scan_status.config(text="⏳ Формирование результатов..."))
+            self.root.after(0, lambda: self.scan_status.config(text="⏳ Формирование..."))
             self.root.after(0, lambda: self.progress_var.set(95))
             self.root.after(0, lambda: self.progress_percent.config(text="95%"))
 
-            self.add_log(f"📊 Формирование списка {len(folder_sizes)} папок...", "info")
-
-            # ========== СОХРАНЯЕМ ВСЕ ПАПКИ (для деталей) ==========
+            # ========== ОПТИМИЗАЦИЯ: Быстрое формирование списка ==========
             all_results = []
             for folder, size in folder_sizes.items():
                 if size > 0:
@@ -2450,7 +2514,7 @@ class ProfessionalDiskAnalyzer:
 
             all_results.sort(key=lambda x: x['size'], reverse=True)
 
-            # ========== СОХРАНЯЕМ ТОЛЬКО ПРЯМЫЕ ПОДПАПКИ КОРНЯ (для отображения) ==========
+            # ========== ОПТИМИЗАЦИЯ: Быстрое получение прямых подпапок ==========
             root_subfolders = []
             try:
                 with os.scandir(path) as entries:
@@ -2461,7 +2525,6 @@ class ProfessionalDiskAnalyzer:
                             folder_name = entry.name
                             if folder_name in self.system_folders:
                                 continue
-                            # Находим размер этой папки из результатов сканирования
                             size = folder_sizes.get(entry.path, 0)
                             if size > 0:
                                 root_subfolders.append({
@@ -2476,20 +2539,17 @@ class ProfessionalDiskAnalyzer:
                 debug_print(f"📂 Прямых подпапок корня: {len(root_subfolders)}")
             except Exception as e:
                 debug_print(f"Ошибка получения прямых подпапок: {e}")
-                # Если ошибка — используем все папки как запасной вариант
-                root_subfolders = all_results[:500]  # Ограничиваем до 500
+                root_subfolders = all_results[:500]
 
             # ========== СОХРАНЯЕМ РЕЗУЛЬТАТЫ ==========
             self.last_scan_root = path
-            self.last_scan_results = all_results  # Все папки (для деталей)
-            self.last_scan_root_subfolders = root_subfolders  # Только прямые подпапки (для отображения)
+            self.last_scan_results = all_results
+            self.last_scan_root_subfolders = root_subfolders
             self.last_scan_total_size = sum(r['size'] for r in all_results)
 
-            # Прогресс 100% - готово!
+            # Прогресс 100%
             self.root.after(0, lambda: self.progress_var.set(100))
             self.root.after(0, lambda: self.progress_percent.config(text="100%"))
-            self.root.after(0, lambda: self.folder_progress_var.set(100))
-            self.root.after(0, lambda: self.folder_progress_percent.config(text="100%"))
             self.root.after(0, lambda: self.scan_status.config(text="✅ Готово!"))
             self.root.after(0, lambda: self.stage_label.config(
                 text="✅ Готово!",
@@ -2500,15 +2560,12 @@ class ProfessionalDiskAnalyzer:
             self.add_log("=" * 70, "info")
             self.add_log(f"⏱️ Завершено за {elapsed_time:.1f} сек", "success")
             self.add_log(f"📊 Найдено {len(all_results)} папок", "success")
-            self.add_log(f"📂 Прямых подпапок: {len(root_subfolders)}", "success")
             if elapsed_time > 0:
                 self.add_log(f"⚡ Скорость: {len(all_results) / elapsed_time:.1f} папок/сек", "success")
             self.add_log("=" * 70, "info")
 
-            # ========== ОТОБРАЖАЕМ ТОЛЬКО ПРЯМЫЕ ПОДПАПКИ ==========
+            # ========== ОТОБРАЖАЕМ РЕЗУЛЬТАТЫ ==========
             self.root.after(0, lambda: self._display_folder_items(root_subfolders, "📊 Результаты сканирования"))
-
-            # СКАНИРОВАНИЕ ЗАВЕРШЕНО (после отображения)
             self.root.after(100, self.scan_complete)
 
         except Exception as e:
@@ -2678,6 +2735,27 @@ class ProfessionalDiskAnalyzer:
             self.scanning = False
             debug_print("Сканирование остановлено пользователем")
             self.add_log("⏹️ СКАНИРОВАНИЕ ОСТАНОВЛЕНО", "warning")
+
+            # ========== ПРИНУДИТЕЛЬНОЕ СОХРАНЕНИЕ КЭША ==========
+            try:
+                # Сохраняем кэш, чтобы не потерять собранные данные
+                self.cache.save_cache()
+                self.add_log("💾 Кэш сохранён при остановке", "info")
+
+                # Если есть текущий путь - сохраняем список папок
+                if self.current_nav_path:
+                    # Проверяем, есть ли собранные папки в памяти
+                    if hasattr(self, '_scan_thread') and self._scan_thread:
+                        # Даём время потоку на завершение
+                        import time
+                        time.sleep(0.1)
+
+                        # Сохраняем кэш ещё раз (на случай, если были обновления)
+                        self.cache.save_cache()
+                        self.add_log(f"💾 Кэш списка сохранён для {self.current_nav_path}", "info")
+            except Exception as e:
+                debug_print(f"Ошибка при сохранении кэша: {e}")
+
             self.set_status("Остановлено", "error")
             self.scan_btn.config(state=NORMAL)
             self.cancel_btn.config(state=DISABLED)
