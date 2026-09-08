@@ -18,7 +18,10 @@ def main():
     print(f"OS: {sys.platform}")
     print(f"CPU cores: {os.cpu_count()}")
     print("=" * 60)
-    sys.stdout.flush()
+
+    # ========== ИЗМЕНЕНИЕ: Безопасный вызов flush ==========
+    if sys.stdout:
+        sys.stdout.flush()
 
     try:
         from tkinter import Tk
@@ -32,7 +35,10 @@ def main():
 
         app = ProfessionalDiskAnalyzer(root)
         print("Главное окно создано. Запуск основного цикла...")
-        sys.stdout.flush()
+
+        # ========== ИЗМЕНЕНИЕ: Безопасный вызов flush ==========
+        if sys.stdout:
+            sys.stdout.flush()
 
         # Привязываем закрытие
         root.protocol("WM_DELETE_WINDOW", app.on_closing)
@@ -46,6 +52,9 @@ def main():
         traceback.print_exc()
     finally:
         print("Программа завершена")
+        # ========== ИЗМЕНЕНИЕ: Безопасный вызов flush ==========
+        if sys.stdout:
+            sys.stdout.flush()
 
 
 if __name__ == "__main__":

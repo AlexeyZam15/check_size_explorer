@@ -112,7 +112,7 @@ class ProfessionalDiskAnalyzer:
         debug_print("Инициализация завершена")
 
     def _insert_items_batched(self, items, source_label, total_items):
-        """Пакетная вставка для большого количества элементов"""
+        """Пакетная вставка для большого количества элементов (с поддержкой файлов)"""
         batch_size = 200
         current_index = 0
 
@@ -130,23 +130,58 @@ class ProfessionalDiskAnalyzer:
             batch = items[start:end]
 
             for i, item in enumerate(batch, start + 1):
-                size = item['size']
-                if size > 1024 ** 4:
-                    emoji = "🔴"
-                elif size > 1024 ** 3:
-                    emoji = "🟡"
-                elif size > 1024 ** 2:
-                    emoji = "🟢"
-                else:
-                    emoji = "⚪"
+                if isinstance(item, dict):
+                    name = item.get('name', '')
+                    size_str = item.get('size_str', '0 Б')
+                    source = item.get('source', '📁')
+                    item_path = item.get('path', '')
+                    size = item.get('size', 0)
+                    is_file = item.get('is_file', False)
 
-                source = item.get('source', '📊')
+                    # ========== ВЫБОР ЭМОДЗИ ==========
+                    if is_file:
+                        ext = os.path.splitext(name)[1].lower()
+                        emoji_map = {
+                            '.txt': '📄', '.log': '📄', '.md': '📄',
+                            '.py': '🐍', '.js': '📜', '.html': '🌐', '.css': '🎨',
+                            '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️',
+                            '.mp3': '🎵', '.wav': '🎵',
+                            '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬',
+                            '.zip': '📦', '.rar': '📦', '.7z': '📦',
+                            '.exe': '⚙️', '.msi': '⚙️',
+                            '.pdf': '📕', '.doc': '📘', '.docx': '📘',
+                            '.xls': '📊', '.xlsx': '📊',
+                            '.iso': '💿',
+                            '.json': '📋', '.xml': '📋',
+                            '.sql': '🗄️', '.db': '🗄️',
+                        }
+                        emoji = emoji_map.get(ext, '📄')
+                    else:
+                        if size > 1024 ** 4:
+                            emoji = "🔴📁"
+                        elif size > 1024 ** 3:
+                            emoji = "🟡📁"
+                        elif size > 1024 ** 2:
+                            emoji = "🟢📁"
+                        else:
+                            emoji = "⚪📁"
+                else:
+                    # Для совместимости со старым форматом
+                    if len(item) >= 5:
+                        name = item[1].split(' ', 1)[-1] if ' ' in item[1] else item[1]
+                        size_str = item[2]
+                        source = item[3]
+                        item_path = item[4]
+                        emoji = item[1].split(' ')[0] if item[1].startswith(('🔴', '🟡', '🟢', '⚪')) else "📁"
+                    else:
+                        continue
+
                 self.tree.insert("", END, values=(
                     i,
-                    f"{emoji} {item['name']}",
-                    item['size_str'],
+                    f"{emoji} {name}",
+                    size_str,
                     source,
-                    item['path']
+                    item_path
                 ))
 
             current_index = end
@@ -164,15 +199,14 @@ class ProfessionalDiskAnalyzer:
             else:
                 self.results = items
                 self.scan_status.config(
-                    text=f"✅ {source_label}: {total_items} папок" if source_label else f"✅ {total_items} папок")
-                self.set_status(f"{total_items} папок", "success")
+                    text=f"✅ {source_label}: {total_items} элементов" if source_label else f"✅ {total_items} элементов")
+                self.set_status(f"{total_items} элементов", "success")
                 self.progress_var.set(100)
                 self.progress_percent.config(text="100%")
                 self.folder_progress_var.set(100)
                 self.folder_progress_percent.config(text="100%")
                 self.stage_label.config(text="✅ Готово", foreground=self.colors['success'])
                 self.scanned_folders_cache[self.current_nav_path] = items
-                self.table_state_cache[self.current_nav_path] = items
                 debug_print(f"✅ Добавлено {total_items} строк (пакетно)")
 
         self.root.after(10, insert_batch)
@@ -326,52 +360,6 @@ class ProfessionalDiskAnalyzer:
         self._update_restore_status(len(items_data))
         debug_print(f"✅ Таблица обновлена: {len(items_data)} элементов")
 
-    def _insert_items_immediate(self, items_data):
-        """Быстрая вставка для малого количества элементов"""
-        # Отключаем обновление UI на время вставки
-        self.tree.configure(selectmode='none')
-
-        for i, item in enumerate(items_data, 1):
-            if isinstance(item, dict):
-                name = item.get('name', '')
-                size_str = item.get('size_str', '0 Б')
-                source = item.get('source', '📁')
-                item_path = item.get('path', '')
-                size = item.get('size', 0)
-
-                if size > 1024 ** 4:
-                    emoji = "🔴"
-                elif size > 1024 ** 3:
-                    emoji = "🟡"
-                elif size > 1024 ** 2:
-                    emoji = "🟢"
-                else:
-                    emoji = "⚪"
-            else:
-                if len(item) >= 5:
-                    name = item[1].split(' ', 1)[-1] if ' ' in item[1] else item[1]
-                    size_str = item[2]
-                    source = item[3]
-                    item_path = item[4]
-                    emoji = item[1].split(' ')[0] if item[1].startswith(('🔴', '🟡', '🟢', '⚪')) else "⚪"
-                else:
-                    continue
-
-            self.tree.insert("", END, values=(
-                i,
-                f"{emoji} {name}",
-                size_str,
-                source,
-                item_path
-            ))
-
-        # Включаем обновление UI
-        self.tree.configure(selectmode='extended')
-        self.root.update_idletasks()
-
-        self.results = items_data
-        self._update_restore_status(len(items_data))
-
     def _clear_table_gradually(self):
         """Постепенная очистка таблицы (без зависания)"""
         children = self.tree.get_children()
@@ -454,8 +442,8 @@ class ProfessionalDiskAnalyzer:
         self._update_table_data(items_data, path)
 
     def _load_folder_async(self, path):
-        """Асинхронная загрузка папки из SQLite"""
-        debug_print(f"📂 Асинхронная загрузка папки: {path}")
+        """Асинхронная загрузка папки из SQLite с файлами"""
+        debug_print(f"📂 Асинхронная загрузка папки с файлами: {path}")
 
         def load_folder():
             try:
@@ -463,7 +451,7 @@ class ProfessionalDiskAnalyzer:
                 if path in self.scanned_folders_cache:
                     items = self.scanned_folders_cache[path]
                     debug_print(f"✅ Загружено из локального кэша: {len(items)} элементов")
-                    self.root.after(0, lambda: self.add_log(f"💾 Загружено из кэша: {len(items)} папок", "cache"))
+                    self.root.after(0, lambda: self.add_log(f"💾 Загружено из кэша: {len(items)} элементов", "cache"))
                     items.sort(key=lambda x: x['size'], reverse=True)
                     self.root.after(0, lambda: self._display_folder_items(items))
                     return
@@ -471,11 +459,12 @@ class ProfessionalDiskAnalyzer:
                 # Получаем данные из SQLite
                 debug_print(f"📂 Чтение данных из основного кэша: {path}")
                 items = []
+                file_items = []  # Отдельно для файлов
 
                 try:
                     entries_list = []
                     with os.scandir(path) as entries:
-                        entries_list = [entry for entry in entries if entry.is_dir()]
+                        entries_list = list(entries)
 
                     total_entries = len(entries_list)
 
@@ -488,65 +477,93 @@ class ProfessionalDiskAnalyzer:
                     conn = sqlite3.connect(self.cache.cache_file, timeout=30)
                     cursor = conn.cursor()
 
-                    # ========== ИСПРАВЛЕНИЕ: Используем параметризованный запрос ==========
                     for i, entry in enumerate(entries_list):
                         if i % 100 == 0:
                             self.root.update_idletasks()
 
-                        folder_name = entry.name
-                        if folder_name in self.system_folders:
+                        entry_name = entry.name
+
+                        # Пропускаем системные папки
+                        if entry.is_dir() and entry_name in self.system_folders:
                             continue
 
-                        key = self.cache.get_folder_key(entry.path)
-
-                        # ========== ИСПРАВЛЕНИЕ: Убираем лишний поиск по path ==========
-                        cursor.execute('''
-                                       SELECT total_size
-                                       FROM cache
-                                       WHERE path_normalized = ?
-                                       ''', (key,))
-
-                        row = cursor.fetchone()
-
-                        if row:
-                            size = row[0]
-                            size_str = format_size(size)
-                            items.append({
-                                'name': folder_name,
-                                'size': size,
-                                'size_str': size_str,
-                                'path': entry.path,
-                                'source': '💾 Кэш'
-                            })
+                        if entry.is_file():
+                            # ========== ФАЙЛ: получаем размер напрямую ==========
+                            try:
+                                stat_info = entry.stat(follow_symlinks=False)
+                                size = stat_info.st_size
+                                size_str = format_size(size)
+                                file_items.append({
+                                    'name': entry_name,
+                                    'size': size,
+                                    'size_str': size_str,
+                                    'path': entry.path,
+                                    'source': '📄 Файл',
+                                    'is_file': True,
+                                    'is_dir': False
+                                })
+                            except (PermissionError, OSError):
+                                # Если не удалось прочитать файл - пропускаем
+                                continue
                         else:
-                            items.append({
-                                'name': folder_name,
-                                'size': 0,
-                                'size_str': '0 Б',
-                                'path': entry.path,
-                                'source': '❓ Нет данных'
-                            })
+                            # ========== ПАПКА: получаем из кэша ==========
+                            key = self.cache.get_folder_key(entry.path)
+                            cursor.execute('''
+                                           SELECT total_size
+                                           FROM cache
+                                           WHERE path_normalized = ?
+                                           ''', (key,))
+                            row = cursor.fetchone()
+
+                            if row:
+                                size = row[0]
+                                size_str = format_size(size)
+                                items.append({
+                                    'name': entry_name,
+                                    'size': size,
+                                    'size_str': size_str,
+                                    'path': entry.path,
+                                    'source': '💾 Кэш',
+                                    'is_file': False,
+                                    'is_dir': True
+                                })
+                            else:
+                                items.append({
+                                    'name': entry_name,
+                                    'size': 0,
+                                    'size_str': '0 Б',
+                                    'path': entry.path,
+                                    'source': '❓ Нет данных',
+                                    'is_file': False,
+                                    'is_dir': True
+                                })
 
                     conn.close()
+
+                    # ========== ОБЪЕДИНЯЕМ ПАПКИ И ФАЙЛЫ ==========
+                    all_items = items + file_items
+
+                    # Сортируем: сначала папки (по размеру), потом файлы (по размеру)
+                    dirs = [x for x in all_items if x.get('is_dir', False)]
+                    files = [x for x in all_items if x.get('is_file', False)]
+                    dirs.sort(key=lambda x: x['size'], reverse=True)
+                    files.sort(key=lambda x: x['size'], reverse=True)
+                    all_items = dirs + files
+
+                    debug_print(f"📊 Загружено: {len(dirs)} папок, {len(files)} файлов")
+
+                    # Сохраняем в локальный кэш и отображаем
+                    self.scanned_folders_cache[path] = all_items
+                    self.root.after(0, lambda: self._display_folder_items(all_items))
 
                 except PermissionError:
                     self.root.after(0, lambda: self.add_log(f"⚠️ Нет доступа к папке: {path}", "warning"))
                     self.root.after(0, lambda: self.scan_status.config(text="⚠️ Нет доступа"))
                     return
                 except Exception as e:
-                    debug_print(f"Ошибка чтения БД: {e}")
-                    self.root.after(0, lambda: self.add_log(f"⚠️ Ошибка чтения кэша: {e}", "warning"))
+                    debug_print(f"Ошибка загрузки: {e}")
+                    self.root.after(0, lambda: self.add_log(f"⚠️ Ошибка загрузки: {e}", "warning"))
                     return
-
-                # Сохраняем в локальный кэш и отображаем
-                if items:
-                    self.scanned_folders_cache[path] = items
-                    items.sort(key=lambda x: x['size'], reverse=True)
-                    self.root.after(0, lambda: self._display_folder_items(items))
-                else:
-                    self.scanned_folders_cache[path] = []
-                    self.root.after(0, lambda: self.add_log("📂 Папка пуста", "info"))
-                    self.root.after(0, lambda: self.scan_status.config(text="📂 Папка пуста"))
 
             except Exception as e:
                 debug_print(f"Ошибка загрузки папки: {str(e)}")
@@ -2199,6 +2216,7 @@ class ProfessionalDiskAnalyzer:
         """
         Отображение элементов папки в таблице с ПАКЕТНОЙ ВСТАВКОЙ
         (универсальный метод для всех случаев)
+        Теперь поддерживает и файлы, и папки
         """
         if not items:
             self.tree.delete(*self.tree.get_children())
@@ -2219,8 +2237,8 @@ class ProfessionalDiskAnalyzer:
                     debug_print(f"✅ Данные уже загружены, пропускаем вставку для {current_path}")
                     self.results = items
                     self.scan_status.config(
-                        text=f"✅ {source_label}: {len(items)} папок" if source_label else f"✅ {len(items)} папок")
-                    self.set_status(f"{len(items)} папок", "success")
+                        text=f"✅ {source_label}: {len(items)} элементов" if source_label else f"✅ {len(items)} элементов")
+                    self.set_status(f"{len(items)} элементов", "success")
                     self.stage_label.config(text="✅ Готово", foreground=self.colors['success'])
                     if self.progress_var.get() < 100:
                         self.progress_var.set(100)
@@ -2245,6 +2263,82 @@ class ProfessionalDiskAnalyzer:
 
         # Для большого количества — пакетная вставка
         self._insert_items_batched(items, source_label, total_items)
+
+    def _insert_items_immediate(self, items_data):
+        """Быстрая вставка для малого количества элементов (с поддержкой файлов)"""
+        # Отключаем обновление UI на время вставки
+        self.tree.configure(selectmode='none')
+
+        for i, item in enumerate(items_data, 1):
+            if isinstance(item, dict):
+                name = item.get('name', '')
+                size_str = item.get('size_str', '0 Б')
+                source = item.get('source', '📁')
+                item_path = item.get('path', '')
+                size = item.get('size', 0)
+                is_file = item.get('is_file', False)
+                is_dir = item.get('is_dir', False)
+
+                # ========== ВЫБОР ЭМОДЗИ В ЗАВИСИМОСТИ ОТ ТИПА ==========
+                if is_file:
+                    # Для файлов используем разные иконки по расширению
+                    ext = os.path.splitext(name)[1].lower()
+                    emoji_map = {
+                        '.txt': '📄', '.log': '📄', '.md': '📄',
+                        '.py': '🐍', '.js': '📜', '.html': '🌐', '.css': '🎨',
+                        '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️', '.bmp': '🖼️', '.svg': '🖼️',
+                        '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵',
+                        '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬',
+                        '.zip': '📦', '.rar': '📦', '.7z': '📦', '.tar': '📦', '.gz': '📦',
+                        '.exe': '⚙️', '.msi': '⚙️', '.dll': '🔧',
+                        '.pdf': '📕', '.doc': '📘', '.docx': '📘', '.xls': '📊', '.xlsx': '📊',
+                        '.ppt': '📽️', '.pptx': '📽️',
+                        '.iso': '💿', '.img': '💿',
+                        '.psd': '🎨', '.ai': '🎨',
+                        '.json': '📋', '.xml': '📋', '.yaml': '📋', '.yml': '📋',
+                        '.sql': '🗄️', '.db': '🗄️',
+                        '.sh': '💻', '.bat': '💻', '.cmd': '💻',
+                    }
+                    emoji = emoji_map.get(ext, '📄')
+                else:
+                    # Для папок используем цветовую индикацию по размеру
+                    if size > 1024 ** 4:
+                        emoji = "🔴📁"
+                    elif size > 1024 ** 3:
+                        emoji = "🟡📁"
+                    elif size > 1024 ** 2:
+                        emoji = "🟢📁"
+                    else:
+                        emoji = "⚪📁"
+            else:
+                # Если item — это кортеж (для обратной совместимости)
+                if len(item) >= 5:
+                    name = item[1].split(' ', 1)[-1] if ' ' in item[1] else item[1]
+                    size_str = item[2]
+                    source = item[3]
+                    item_path = item[4]
+                    # Пытаемся определить тип
+                    if source == '📄 Файл':
+                        emoji = '📄'
+                    else:
+                        emoji = item[1].split(' ')[0] if item[1].startswith(('🔴', '🟡', '🟢', '⚪')) else "📁"
+                else:
+                    continue
+
+            self.tree.insert("", END, values=(
+                i,
+                f"{emoji} {name}",
+                size_str,
+                source,
+                item_path
+            ))
+
+        # Включаем обновление UI
+        self.tree.configure(selectmode='extended')
+        self.root.update_idletasks()
+
+        self.results = items_data
+        self._update_restore_status(len(items_data))
 
     def refresh_current_folder(self):
         """Обновление текущей папки (принудительное пересканирование)"""
@@ -2437,8 +2531,10 @@ class ProfessionalDiskAnalyzer:
                         return
                     result['sizes'] = sizes
                     result['counts'] = counts
+                    debug_print(f"✅ scan_all_folders_one_pass вернул {len(sizes) if sizes else 0} папок")
                 except Exception as e:
                     result['error'] = str(e)
+                    debug_print(f"❌ Ошибка в scan_thread: {e}")
 
             thread = threading.Thread(target=scan_thread)
             thread.daemon = True
@@ -2447,7 +2543,7 @@ class ProfessionalDiskAnalyzer:
             # ========== ОПТИМИЗАЦИЯ: Увеличиваем интервал проверки ==========
             while thread.is_alive():
                 self.root.update_idletasks()
-                time.sleep(0.1)  # Было 0.05
+                time.sleep(0.1)
 
             if result['error']:
                 self.add_log(f"❌ Ошибка: {result['error']}", "error")
@@ -2465,7 +2561,15 @@ class ProfessionalDiskAnalyzer:
 
             folder_sizes = result['sizes']
             folder_counts = result['counts']
+
+            # ========== ИСПРАВЛЕНИЕ: Проверка, что результат не пустой ==========
+            if folder_sizes is None:
+                self.add_log("❌ Результат сканирования пуст (None)", "error")
+                self.root.after(0, self.scan_complete)
+                return
+
             total = len(folder_sizes)
+            debug_print(f"📊 Получено {total} папок из сканирования")
 
             if total == 0:
                 self.add_log("⚠️ Папок не найдено", "warning")
@@ -2515,10 +2619,12 @@ class ProfessionalDiskAnalyzer:
                     })
 
             all_results.sort(key=lambda x: x['size'], reverse=True)
+            debug_print(f"📊 Сформировано {len(all_results)} результатов")
 
-            # ========== ОПТИМИЗАЦИЯ: Быстрое получение прямых подпапок ==========
+            # ========== ИСПРАВЛЕНИЕ: Получение прямых подпапок корня ==========
             root_subfolders = []
             try:
+                debug_print(f"📂 Сбор прямых подпапок для: {path}")
                 with os.scandir(path) as entries:
                     for entry in entries:
                         if not self.scanning:
@@ -2528,26 +2634,37 @@ class ProfessionalDiskAnalyzer:
                             if folder_name in self.system_folders:
                                 continue
                             size = folder_sizes.get(entry.path, 0)
-                            if size > 0:
-                                root_subfolders.append({
-                                    'name': folder_name,
-                                    'size': size,
-                                    'size_str': format_size(size),
-                                    'path': entry.path,
-                                    'source': '🔄 Сканирование',
-                                    'file_count': folder_counts.get(entry.path, 0)
-                                })
+                            # ========== ИСПРАВЛЕНИЕ: Добавляем даже папки с размером 0 ==========
+                            # Но с пометкой, что они пустые
+                            root_subfolders.append({
+                                'name': folder_name,
+                                'size': size,
+                                'size_str': format_size(size) if size > 0 else "0 Б",
+                                'path': entry.path,
+                                'source': '🔄 Сканирование' if size > 0 else '📂 Пустая',
+                                'file_count': folder_counts.get(entry.path, 0)
+                            })
                 root_subfolders.sort(key=lambda x: x['size'], reverse=True)
                 debug_print(f"📂 Прямых подпапок корня: {len(root_subfolders)}")
+
+                # ========== ИСПРАВЛЕНИЕ: Если root_subfolders пуст, используем первые 500 из all_results ==========
+                if not root_subfolders:
+                    debug_print("⚠️ root_subfolders пуст, используем первые 500 из all_results")
+                    root_subfolders = all_results[:500]
+
             except Exception as e:
                 debug_print(f"Ошибка получения прямых подпапок: {e}")
-                root_subfolders = all_results[:500]
+                # ========== ИСПРАВЛЕНИЕ: В случае ошибки используем all_results ==========
+                root_subfolders = all_results[:500] if all_results else []
 
             # ========== СОХРАНЯЕМ РЕЗУЛЬТАТЫ ==========
             self.last_scan_root = path
             self.last_scan_results = all_results
             self.last_scan_root_subfolders = root_subfolders
             self.last_scan_total_size = sum(r['size'] for r in all_results)
+
+            debug_print(f"📊 last_scan_root_subfolders: {len(self.last_scan_root_subfolders)} папок")
+            debug_print(f"📊 last_scan_results: {len(self.last_scan_results)} папок")
 
             # Прогресс 100%
             self.root.after(0, lambda: self.progress_var.set(100))
@@ -2566,8 +2683,20 @@ class ProfessionalDiskAnalyzer:
                 self.add_log(f"⚡ Скорость: {len(all_results) / elapsed_time:.1f} папок/сек", "success")
             self.add_log("=" * 70, "info")
 
-            # ========== ОТОБРАЖАЕМ РЕЗУЛЬТАТЫ ==========
-            self.root.after(0, lambda: self._display_folder_items(root_subfolders, "📊 Результаты сканирования"))
+            # ========== ИСПРАВЛЕНИЕ: Проверка перед отображением ==========
+            if root_subfolders:
+                debug_print(f"✅ Отображение {len(root_subfolders)} папок в таблице")
+                self.root.after(0, lambda: self._display_folder_items(root_subfolders, "📊 Результаты сканирования"))
+            else:
+                debug_print("⚠️ Нет папок для отображения, показываем первые 100 из all_results")
+                # Показываем первые 100 папок из всех результатов
+                top_items = all_results[:100] if all_results else []
+                if top_items:
+                    self.root.after(0, lambda: self._display_folder_items(top_items, "📊 Топ-100 папок"))
+                else:
+                    self.root.after(0, lambda: self.add_log("⚠️ Нет результатов для отображения", "warning"))
+                    self.root.after(0, lambda: self.scan_status.config(text="⚠️ Нет данных"))
+
             self.root.after(100, self.scan_complete)
 
         except Exception as e:

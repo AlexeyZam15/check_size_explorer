@@ -513,304 +513,6 @@ class SmartCacheManager:
                 except:
                     pass
 
-    def save_cache_batch_with_progress(self, items, progress_callback):
-        """
-        Сохранение в кэш с обновлением прогресса (80-95%)
-        СУПЕР-ОПТИМИЗИРОВАННАЯ ВЕРСИЯ
-        """
-        if not items:
-            return
-
-        total = len(items)
-        # ========== ИЗМЕНЕНИЕ: Увеличен batch_size ==========
-        batch_size = 100000  # Было 10000
-        start_time = time.time()
-
-        try:
-            conn = sqlite3.connect(self.cache_file, timeout=60)
-            cursor = conn.cursor()
-
-            # ========== ИЗМЕНЕНИЕ: Оптимизация SQLite для больших объёмов ==========
-            cursor.execute("PRAGMA synchronous = OFF")
-            # ========== ИЗМЕНЕНИЕ: WAL вместо MEMORY для больших объёмов ==========
-            cursor.execute("PRAGMA journal_mode = WAL")  # Было MEMORY
-            # ========== ИЗМЕНЕНИЕ: Увеличен кэш до 2 ГБ ==========
-            cursor.execute("PRAGMA cache_size = -2000000")  # Было 2000000
-
-            cursor.execute("BEGIN TRANSACTION")
-
-            for i in range(0, total, batch_size):
-                batch = items[i:i + batch_size]
-
-                values = []
-                for path, total_size, file_count in batch:
-                    key = self.get_folder_key(path)
-                    values.append((path, total_size, file_count, time.time(), time.time(), '{}', key))
-
-                cursor.executemany('''
-                    INSERT OR REPLACE INTO cache 
-                    (path, total_size, file_count, last_modified, timestamp, file_signatures, path_normalized)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', values)
-
-                processed = min(i + batch_size, total)
-                stage_progress = (processed / total) * 100
-                total_progress = 80 + 15 * (stage_progress / 100)  # 80-95%
-
-                # ========== ИЗМЕНЕНИЕ: Обновляем прогресс реже ==========
-                if progress_callback and (processed % 200000 == 0 or processed >= total):
-                    progress_callback(
-                        total_progress,
-                        "Сохранение в кэш",
-                        stage_progress,
-                        f"{processed}/{total} ({stage_progress:.0f}%)"
-                    )
-
-                if processed % 100000 == 0 or processed >= total:
-                    debug_print(f"  Сохранено {processed}/{total} ({stage_progress:.0f}%)")
-
-            conn.commit()
-            conn.close()
-
-            elapsed = time.time() - start_time
-            debug_print(f"✅ Сохранено {len(items)} папок за {elapsed:.1f} сек")
-
-        except Exception as e:
-            debug_print(f"❌ Ошибка сохранения: {e}")
-            try:
-                conn.rollback()
-            except:
-                pass
-
-    def _save_cache_batch_with_progress(self, items, progress_callback):
-        """
-        Сохранение в кэш с обновлением прогресса (СУПЕР-ОПТИМИЗИРОВАННО)
-        """
-        if not items:
-            return
-
-        total = len(items)
-        # ========== ИЗМЕНЕНИЕ: Увеличен batch_size ==========
-        batch_size = 100000  # Было 100000 (уже было, оставляем)
-        start_time = time.time()
-
-        try:
-            conn = sqlite3.connect(self.cache_file, timeout=60)
-            cursor = conn.cursor()
-
-            # ========== ИЗМЕНЕНИЕ: Оптимизация SQLite ==========
-            cursor.execute("PRAGMA synchronous = OFF")
-            cursor.execute("PRAGMA journal_mode = WAL")  # Было MEMORY
-            cursor.execute("PRAGMA cache_size = -2000000")  # 2 ГБ кэша
-
-            cursor.execute("BEGIN TRANSACTION")
-
-            for i in range(0, total, batch_size):
-                batch = items[i:i + batch_size]
-
-                values = []
-                for path, total_size, file_count in batch:
-                    key = self.get_folder_key(path)
-                    values.append((path, total_size, file_count, time.time(), time.time(), '{}', key))
-
-                cursor.executemany('''
-                    INSERT OR REPLACE INTO cache 
-                    (path, total_size, file_count, last_modified, timestamp, file_signatures, path_normalized)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', values)
-
-                processed = min(i + batch_size, total)
-                stage_progress = (processed / total) * 100
-                total_progress = 80 + 15 * (stage_progress / 100)
-
-                # ========== ИЗМЕНЕНИЕ: Обновляем прогресс реже ==========
-                if progress_callback and (processed % 200000 == 0 or processed >= total):
-                    progress_callback(
-                        total_progress,
-                        "Сохранение в кэш",
-                        stage_progress,
-                        f"{processed}/{total} ({stage_progress:.0f}%)"
-                    )
-
-                if processed % 100000 == 0 or processed >= total:
-                    debug_print(f"  Сохранено {processed}/{total} ({stage_progress:.0f}%)")
-
-            conn.commit()
-            conn.close()
-
-            elapsed = time.time() - start_time
-            debug_print(f"✅ Сохранено {len(items)} папок за {elapsed:.1f} сек")
-
-        except Exception as e:
-            debug_print(f"❌ Ошибка сохранения: {e}")
-            try:
-                conn.rollback()
-            except:
-                pass
-
-    def save_cache_batch(self, items):
-        """
-        ПАКЕТНОЕ сохранение множества папок в кэш (СУПЕР-ОПТИМИЗИРОВАННО)
-        items: список кортежей (path, total_size, file_count)
-        """
-        if not items:
-            return
-
-        debug_print(f"💾 Пакетное сохранение {len(items)} папок в кэш...")
-        start_time = time.time()
-
-        try:
-            conn = sqlite3.connect(self.cache_file, timeout=60)
-            cursor = conn.cursor()
-
-            # ========== ИЗМЕНЕНИЕ: Оптимизация SQLite ==========
-            cursor.execute("PRAGMA synchronous = OFF")
-            cursor.execute("PRAGMA journal_mode = WAL")  # Было MEMORY
-            cursor.execute("PRAGMA cache_size = -2000000")  # 2 ГБ кэша
-
-            cursor.execute("BEGIN TRANSACTION")
-
-            # ========== ИЗМЕНЕНИЕ: Увеличен batch_size ==========
-            batch_size = 100000  # Было 50000
-            total = len(items)
-
-            for i in range(0, total, batch_size):
-                batch = items[i:i + batch_size]
-
-                values = []
-                for path, total_size, file_count in batch:
-                    key = self.get_folder_key(path)
-                    values.append((
-                        path,
-                        total_size,
-                        file_count,
-                        time.time(),
-                        time.time(),
-                        '{}',
-                        key
-                    ))
-
-                cursor.executemany('''
-                    INSERT OR REPLACE INTO cache 
-                    (path, total_size, file_count, last_modified, timestamp, file_signatures, path_normalized)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', values)
-
-                processed = min(i + batch_size, total)
-                if processed % 200000 == 0 or processed >= total:
-                    progress = int(processed / total * 100)
-                    debug_print(f"  Сохранено {processed}/{total} ({progress}%)")
-
-            conn.commit()
-            conn.close()
-
-            elapsed = time.time() - start_time
-            debug_print(f"✅ Сохранено {len(items)} папок за {elapsed:.1f} сек")
-
-        except Exception as e:
-            debug_print(f"❌ Ошибка пакетного сохранения: {e}")
-            try:
-                conn.rollback()
-            except:
-                pass
-
-    def get_cached_local_sizes(self, root_path):
-        """
-        Получение локальных размеров для ВСЕХ папок из кэша
-        Возвращает словарь {путь: (размер, количество_файлов)} или None
-        """
-        try:
-            conn = sqlite3.connect(self.cache_file, timeout=30)
-            cursor = conn.cursor()
-
-            # Получаем все локальные размеры для папок, начинающихся с root_path
-            cursor.execute('''
-                           SELECT path, local_size, local_count, timestamp
-                           FROM local_sizes
-                           WHERE path LIKE ? OR path_normalized LIKE ?
-                           ''', (root_path + '%', root_path.lower().replace('\\', '/') + '%'))
-
-            rows = cursor.fetchall()
-            conn.close()
-
-            if not rows:
-                return None
-
-            # Проверяем актуальность (не старше 7 дней)
-            result = {}
-            for path, local_size, local_count, timestamp in rows:
-                if time.time() - timestamp < 86400 * 7:  # 7 дней
-                    result[path] = (local_size, local_count)
-
-            if result:
-                debug_print(f"📂 Загружено {len(result)} локальных размеров из кэша")
-                return result
-
-            return None
-
-        except Exception as e:
-            debug_print(f"Ошибка чтения локальных размеров: {e}")
-            return None
-
-    def save_local_sizes(self, local_sizes, local_counts):
-        """
-        Сохранение локальных размеров в кэш (СУПЕР-ОПТИМИЗИРОВАННО)
-        """
-        if not local_sizes:
-            return
-
-        debug_print(f"💾 Сохранение {len(local_sizes)} локальных размеров в кэш...")
-        start_time = time.time()
-
-        try:
-            conn = sqlite3.connect(self.cache_file, timeout=60)
-            cursor = conn.cursor()
-
-            # ========== ИЗМЕНЕНИЕ: Оптимизация SQLite ==========
-            cursor.execute("PRAGMA synchronous = OFF")
-            cursor.execute("PRAGMA journal_mode = WAL")  # Было MEMORY
-            cursor.execute("PRAGMA cache_size = -2000000")  # 2 ГБ кэша
-
-            cursor.execute("BEGIN TRANSACTION")
-
-            # ========== ИЗМЕНЕНИЕ: Увеличен batch_size ==========
-            batch_size = 100000  # Было 50000
-            items = list(local_sizes.items())
-            total = len(items)
-
-            for i in range(0, total, batch_size):
-                batch = items[i:i + batch_size]
-
-                values = []
-                for path, size in batch:
-                    count = local_counts.get(path, 0)
-                    key = self.get_folder_key(path)
-                    values.append((path, size, count, time.time(), key))
-
-                cursor.executemany('''
-                    INSERT OR REPLACE INTO local_sizes 
-                    (path, local_size, local_count, timestamp, path_normalized)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', values)
-
-                processed = min(i + batch_size, total)
-                if processed % 200000 == 0 or processed >= total:
-                    progress = int(processed / total * 100)
-                    debug_print(f"  Сохранено {processed}/{total} ({progress}%)")
-
-            conn.commit()
-            conn.close()
-
-            elapsed = time.time() - start_time
-            debug_print(f"✅ Сохранено {len(local_sizes)} локальных размеров за {elapsed:.1f} сек")
-
-        except Exception as e:
-            debug_print(f"❌ Ошибка сохранения локальных размеров: {e}")
-            try:
-                conn.rollback()
-            except:
-                pass
-
     def scan_all_folders_one_pass(self, root_path, progress_callback=None, scanning_flag=None):
         """
         ОДИН ПРОХОД scandir по всему дереву папок (СУПЕР-ОПТИМИЗИРОВАННЫЙ)
@@ -900,68 +602,78 @@ class SmartCacheManager:
 
         debug_print("📂 Сбор списка папок...")
 
-        while stack:
-            if is_scanning_func is not None and not is_scanning_func():
-                return {}, {}
+        try:
+            while stack:
+                if is_scanning_func is not None and not is_scanning_func():
+                    return {}, {}
 
-            path, depth = stack.pop()
+                path, depth = stack.pop()
 
-            if not os.path.exists(path):
-                continue
+                if not os.path.exists(path):
+                    continue
 
-            all_paths.append((depth, path))
-            all_paths_simple.append(path)
-            if depth > max_depth:
-                max_depth = depth
-            folder_count += 1
+                all_paths.append((depth, path))
+                all_paths_simple.append(path)
+                if depth > max_depth:
+                    max_depth = depth
+                folder_count += 1
 
-            current_time = time.time()
+                current_time = time.time()
 
-            if folder_count % GC_INTERVAL == 0:
-                gc.collect(0)
-                elapsed_total = current_time - start_time
-                speed = folder_count / elapsed_total if elapsed_total > 0 else 0
-                debug_print(f"📊 Статистика на {folder_count} папок:")
-                debug_print(f"  ⏱️ Всего времени: {elapsed_total:.1f} сек")
-                debug_print(f"  🚀 Скорость: {speed:.1f} папок/сек")
-                debug_print(f"  ❌ Ошибок доступа: {error_count}")
-                if PSUTIL_AVAILABLE:
-                    gc_count = gc.get_count()
-                    debug_print(f"  🗑️ GC: {gc_count}")
+                if folder_count % GC_INTERVAL == 0:
+                    gc.collect(0)
+                    elapsed_total = current_time - start_time
+                    speed = folder_count / elapsed_total if elapsed_total > 0 else 0
+                    debug_print(f"📊 Статистика на {folder_count} папок:")
+                    debug_print(f"  ⏱️ Всего времени: {elapsed_total:.1f} сек")
+                    debug_print(f"  🚀 Скорость: {speed:.1f} папок/сек")
+                    debug_print(f"  ❌ Ошибок доступа: {error_count}")
+                    if PSUTIL_AVAILABLE:
+                        gc_count = gc.get_count()
+                        debug_print(f"  🗑️ GC: {gc_count}")
 
-            if current_time - last_update >= UI_UPDATE_INTERVAL:
-                if progress_cb:
-                    progress_pct = min(5, (folder_count / 1000) * 5)
-                    progress_cb(
-                        progress_pct,
-                        "Сбор списка папок",
-                        min(100, progress_pct * 20),
-                        f"Найдено {folder_count} папок"
-                    )
-                last_update = current_time
+                if current_time - last_update >= UI_UPDATE_INTERVAL:
+                    if progress_cb:
+                        progress_pct = min(5, (folder_count / 1000) * 5)
+                        progress_cb(
+                            progress_pct,
+                            "Сбор списка папок",
+                            min(100, progress_pct * 20),
+                            f"Найдено {folder_count} папок"
+                        )
+                    last_update = current_time
 
+                try:
+                    with os.scandir(path) as entries:
+                        for entry in entries:
+                            if is_scanning_func is not None and not is_scanning_func():
+                                return {}, {}
+                            try:
+                                if entry.is_dir():
+                                    name = entry.name
+                                    if name not in system_folders_set:
+                                        stack.append((entry.path, depth + 1))
+                            except OSError:
+                                pass
+                except (PermissionError, OSError):
+                    if path not in error_cache:
+                        error_cache.add(path)
+                        error_count += 1
+                        if error_count % 50 == 0:
+                            debug_print(f"  ⚠️ Ошибка доступа #{error_count}: {os.path.basename(path)}")
+                    continue
+
+            # ========== ИСПРАВЛЕНИЕ: Безопасная запись в stdout ==========
             try:
-                with os.scandir(path) as entries:
-                    for entry in entries:
-                        if is_scanning_func is not None and not is_scanning_func():
-                            return {}, {}
-                        try:
-                            if entry.is_dir():
-                                name = entry.name
-                                if name not in system_folders_set:
-                                    stack.append((entry.path, depth + 1))
-                        except OSError:
-                            pass
-            except (PermissionError, OSError):
-                if path not in error_cache:
-                    error_cache.add(path)
-                    error_count += 1
-                    if error_count % 50 == 0:
-                        debug_print(f"  ⚠️ Ошибка доступа #{error_count}: {os.path.basename(path)}")
-                continue
+                sys.stdout.write(f"\r📊 Сбор списка папок... {folder_count} ✅\n")
+                if sys.stdout:
+                    sys.stdout.flush()
+            except Exception:
+                pass
 
-        sys.stdout.write(f"\r📊 Сбор списка папок... {folder_count} ✅\n")
-        sys.stdout.flush()
+        except Exception as e:
+            debug_print(f"❌ Ошибка при сборе списка папок: {e}")
+            # Продолжаем с тем, что уже собрали
 
         if progress_cb:
             progress_cb(5, "Сбор списка папок", 100, f"Собрано {folder_count} папок")
@@ -985,7 +697,12 @@ class SmartCacheManager:
         local_sizes = {}
         local_counts = {}
 
-        cached_local = self.get_cached_local_sizes(root_path)
+        # Пытаемся загрузить из кэша
+        try:
+            cached_local = self.get_cached_local_sizes(root_path)
+        except Exception as e:
+            debug_print(f"⚠️ Ошибка загрузки кэша локальных размеров: {e}")
+            cached_local = None
 
         if cached_local is not None and len(cached_local) == total_folders:
             for path, (size, count) in cached_local.items():
@@ -1036,12 +753,20 @@ class SmartCacheManager:
                     if is_scanning_func is not None and not is_scanning_func():
                         executor.shutdown(wait=False, cancel_futures=True)
                         if local_sizes:
-                            self.save_local_sizes(local_sizes, local_counts)
+                            try:
+                                self.save_local_sizes(local_sizes, local_counts)
+                            except Exception as e:
+                                debug_print(f"⚠️ Ошибка сохранения локальных размеров: {e}")
                         return {}, {}
 
-                    path, size, count = future.result()
-                    local_sizes[path] = size
-                    local_counts[path] = count
+                    try:
+                        path, size, count = future.result()
+                        local_sizes[path] = size
+                        local_counts[path] = count
+                    except Exception as e:
+                        debug_print(f"⚠️ Ошибка в потоке: {e}")
+                        continue
+
                     processed += 1
 
                     if processed % 50000 == 0:
@@ -1062,14 +787,26 @@ class SmartCacheManager:
                                 f"{processed}/{total} | {speed:.0f} папок/сек"
                             )
 
-                        sys.stdout.write(f"\r📊 Сбор размеров: {stage_progress:.1f}% ({processed}/{total})")
-                        sys.stdout.flush()
+                        try:
+                            sys.stdout.write(f"\r📊 Сбор размеров: {stage_progress:.1f}% ({processed}/{total})")
+                            if sys.stdout:
+                                sys.stdout.flush()
+                        except Exception:
+                            pass
                         last_update = current_time
 
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            try:
+                sys.stdout.write("\n")
+                if sys.stdout:
+                    sys.stdout.flush()
+            except Exception:
+                pass
 
-            self.save_local_sizes(local_sizes, local_counts)
+            try:
+                self.save_local_sizes(local_sizes, local_counts)
+            except Exception as e:
+                debug_print(f"⚠️ Ошибка сохранения локальных размеров: {e}")
+
             if progress_cb:
                 progress_cb(50, "Сбор локальных размеров", 100, f"Собрано {len(local_sizes)} папок")
 
@@ -1091,7 +828,11 @@ class SmartCacheManager:
         sort_start = time.time()
 
         # ========== ИСПРАВЛЕНИЕ: Сортируем по глубине (убывание) ==========
-        sorted_paths = sorted(all_paths, key=lambda x: x[0], reverse=True)
+        try:
+            sorted_paths = sorted(all_paths, key=lambda x: x[0], reverse=True)
+        except Exception as e:
+            debug_print(f"⚠️ Ошибка сортировки: {e}")
+            sorted_paths = all_paths[::-1]  # fallback
 
         debug_print(f"  ⏱️ Сортировка: {time.time() - sort_start:.2f} сек")
 
@@ -1100,9 +841,12 @@ class SmartCacheManager:
         counts = {}
 
         # ========== ИСПРАВЛЕНИЕ: Копируем локальные размеры ==========
-        for depth, path in all_paths:
-            sizes[path] = local_sizes.get(path, 0)
-            counts[path] = local_counts.get(path, 0)
+        try:
+            for depth, path in all_paths:
+                sizes[path] = local_sizes.get(path, 0)
+                counts[path] = local_counts.get(path, 0)
+        except Exception as e:
+            debug_print(f"⚠️ Ошибка копирования размеров: {e}")
 
         # ========== ИСПРАВЛЕНИЕ: Обратный проход ==========
         debug_print("🔄 Обратный проход для рекурсивных размеров...")
@@ -1125,8 +869,12 @@ class SmartCacheManager:
 
             # ========== ИСПРАВЛЕНИЕ: Добавляем размер текущей папки к родителю ==========
             if parent in sizes:
-                sizes[parent] = sizes.get(parent, 0) + sizes.get(path, 0)
-                counts[parent] = counts.get(parent, 0) + counts.get(path, 0)
+                try:
+                    sizes[parent] = sizes.get(parent, 0) + sizes.get(path, 0)
+                    counts[parent] = counts.get(parent, 0) + counts.get(path, 0)
+                except Exception as e:
+                    debug_print(f"⚠️ Ошибка в обратном проходе для {path}: {e}")
+                    continue
 
             processed += 1
 
@@ -1150,19 +898,28 @@ class SmartCacheManager:
                         f"{processed}/{total_recursive} | Осталось: {eta_str}"
                     )
 
-                sys.stdout.write(f"\r📊 Вычисление размеров: {stage_progress:.1f}% ({processed}/{total_recursive})")
-                sys.stdout.flush()
+                try:
+                    sys.stdout.write(f"\r📊 Вычисление размеров: {stage_progress:.1f}% ({processed}/{total_recursive})")
+                    if sys.stdout:
+                        sys.stdout.flush()
+                except Exception:
+                    pass
                 last_update = current_time
 
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        try:
+            sys.stdout.write("\n")
+            if sys.stdout:
+                sys.stdout.flush()
+        except Exception:
+            pass
 
         if progress_cb:
             progress_cb(80, "Вычисление рекурсивных размеров", 100, f"Вычислено {len(sizes)} папок")
 
         debug_times['stage3_end'] = time.time()
         debug_print(
-            f"  ⏱️ Этап 3 (рекурсивные размеры): {debug_times['stage3_end'] - debug_times['stage2_end']:.2f} сек")
+            f"  ⏱️ Этап 3 (рекурсивные размеры): {debug_times['stage3_end'] - debug_times['stage2_end']:.2f} сек"
+        )
 
         gc.collect(0)
 
@@ -1176,7 +933,10 @@ class SmartCacheManager:
                 cache_items.append((path, size, counts.get(path, 0)))
 
         if cache_items:
-            self._save_cache_batch_with_progress(cache_items, progress_cb)
+            try:
+                self._save_cache_batch_with_progress(cache_items, progress_cb)
+            except Exception as e:
+                debug_print(f"⚠️ Ошибка сохранения кэша: {e}")
 
         if progress_cb:
             progress_cb(100, "Готово", 100, f"Завершено! {len(sizes)} папок")
@@ -1193,9 +953,11 @@ class SmartCacheManager:
             debug_print(f"  🚀 Средняя скорость: {len(sizes) / elapsed:.1f} папок/сек")
         debug_print(f"  ⏱️ Этап 1 (сбор списка): {debug_times.get('stage1_end', 0) - start_time:.2f} сек")
         debug_print(
-            f"  ⏱️ Этап 2 (локальные размеры): {debug_times.get('stage2_end', 0) - debug_times.get('stage1_end', 0):.2f} сек")
+            f"  ⏱️ Этап 2 (локальные размеры): {debug_times.get('stage2_end', 0) - debug_times.get('stage1_end', 0):.2f} сек"
+        )
         debug_print(
-            f"  ⏱️ Этап 3 (рекурсивные размеры): {debug_times.get('stage3_end', 0) - debug_times.get('stage2_end', 0):.2f} сек")
+            f"  ⏱️ Этап 3 (рекурсивные размеры): {debug_times.get('stage3_end', 0) - debug_times.get('stage2_end', 0):.2f} сек"
+        )
         debug_print(f"  ⏱️ Максимальная глубина: {max_depth}")
 
         debug_print(f"✅ Один проход завершён за {elapsed:.2f} сек ({len(sizes)} папок)")
@@ -1355,183 +1117,6 @@ class SmartCacheManager:
         except Exception as e:
             debug_print(f"❌ Ошибка в быстром методе: {e}")
             return 0
-
-    def _init_database(self):
-        """Инициализация SQLite базы данных"""
-        try:
-            # Проверяем, существует ли файл и является ли он SQLite
-            if os.path.exists(self.cache_file):
-                try:
-                    with open(self.cache_file, 'rb') as f:
-                        header = f.read(16)
-                        if not header.startswith(b'SQLite format 3'):
-                            debug_print(f"⚠️ Файл {self.cache_file} не является SQLite, удаляем")
-                            os.remove(self.cache_file)
-                            debug_print("🔄 Создаём новый файл кэша")
-                except Exception as e:
-                    debug_print(f"⚠️ Ошибка проверки файла: {e}, удаляем")
-                    try:
-                        os.remove(self.cache_file)
-                    except:
-                        pass
-
-            conn = sqlite3.connect(self.cache_file, timeout=30)
-            cursor = conn.cursor()
-
-            # Таблица для кэша папок (рекурсивные размеры)
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS cache
-                           (
-                               path
-                               TEXT
-                               PRIMARY
-                               KEY,
-                               total_size
-                               INTEGER
-                               DEFAULT
-                               0,
-                               file_count
-                               INTEGER
-                               DEFAULT
-                               0,
-                               last_modified
-                               REAL
-                               DEFAULT
-                               0,
-                               timestamp
-                               REAL
-                               DEFAULT
-                               0,
-                               file_signatures
-                               TEXT
-                               DEFAULT
-                               '{}',
-                               path_normalized
-                               TEXT
-                           )
-                           ''')
-
-            # Таблица для локальных размеров (только файлы в корне папки)
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS local_sizes
-                           (
-                               path
-                               TEXT
-                               PRIMARY
-                               KEY,
-                               local_size
-                               INTEGER
-                               DEFAULT
-                               0,
-                               local_count
-                               INTEGER
-                               DEFAULT
-                               0,
-                               timestamp
-                               REAL
-                               DEFAULT
-                               0,
-                               path_normalized
-                               TEXT
-                           )
-                           ''')
-
-            # Таблица для кэша списка папок
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS folder_list
-                           (
-                               id
-                               INTEGER
-                               PRIMARY
-                               KEY,
-                               root_path
-                               TEXT,
-                               folders
-                               TEXT,
-                               folder_count
-                               INTEGER,
-                               timestamp
-                               REAL,
-                               UNIQUE
-                           (
-                               root_path
-                           )
-                               )
-                           ''')
-
-            # Создаём индексы для быстрого поиска
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_path_normalized
-                               ON cache(path_normalized)
-                           ''')
-
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_cache_timestamp
-                               ON cache(timestamp)
-                           ''')
-
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_local_path_normalized
-                               ON local_sizes(path_normalized)
-                           ''')
-
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_local_timestamp
-                               ON local_sizes(timestamp)
-                           ''')
-
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_folder_list_root
-                               ON folder_list(root_path)
-                           ''')
-
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_folder_list_timestamp
-                               ON folder_list(timestamp)
-                           ''')
-
-            # ========== ИЗМЕНЕНИЕ: Добавлен составной индекс для быстрых запросов ==========
-            cursor.execute('''
-                           CREATE INDEX IF NOT EXISTS idx_cache_path_timestamp
-                               ON cache(path_normalized, timestamp)
-                           ''')
-
-            conn.commit()
-            conn.close()
-            debug_print("✅ База данных SQLite инициализирована")
-
-        except sqlite3.DatabaseError as e:
-            debug_print(f"❌ Ошибка инициализации БД: {e}")
-            # Если файл повреждён - удаляем и создаём заново
-            if os.path.exists(self.cache_file):
-                try:
-                    os.remove(self.cache_file)
-                    debug_print("🗑️ Повреждённый файл удалён")
-                except:
-                    pass
-
-            # Пробуем создать заново
-            try:
-                conn = sqlite3.connect(self.cache_file, timeout=30)
-                cursor = conn.cursor()
-
-                # ... (остальной код создания таблиц такой же, как выше)
-
-                conn.commit()
-                conn.close()
-                debug_print("✅ База данных SQLite создана заново")
-
-            except Exception as e2:
-                debug_print(f"❌ Не удалось создать БД: {e2}")
-
-        except Exception as e:
-            debug_print(f"❌ Ошибка инициализации БД: {e}")
-            if os.path.exists(self.cache_file):
-                try:
-                    os.remove(self.cache_file)
-                    debug_print("🗑️ Файл удалён, будет создан заново")
-                except:
-                    pass
 
     def get_folder_key(self, folder_path):
         """Получение ключа для папки (нормализованный путь)"""
