@@ -1,12 +1,23 @@
 import os
 import json
-from .utils import debug_print
+from .utils import debug_print, get_app_data_path
 
 
 class SettingsManager:
     """Управление настройками программы"""
 
-    def __init__(self, settings_file="settings.json"):
+    def __init__(self, settings_file=None):
+        """
+        Инициализация менеджера настроек
+
+        Args:
+            settings_file (str): Путь к файлу настроек. Если None — используется путь в Documents.
+        """
+        # Если путь не указан — используем папку Documents
+        if settings_file is None:
+            app_data_dir = get_app_data_path("DiskAnalyzer")
+            settings_file = os.path.join(app_data_dir, "settings.json")
+
         self.settings_file = settings_file
         self.settings = {}
         self.default_settings = {
@@ -23,6 +34,7 @@ class SettingsManager:
             'sort_by': 'size',
             'sort_reverse': True
         }
+        debug_print(f"📁 Файл настроек: {self.settings_file}")
         self.load_settings()
 
     def load_settings(self):

@@ -16,7 +16,7 @@ import gc
 
 from .cache_manager import SmartCacheManager
 from .settings_manager import SettingsManager
-from .utils import debug_print, format_size
+from .utils import debug_print, format_size, get_app_data_path
 
 
 class ProfessionalDiskAnalyzer:
@@ -25,8 +25,9 @@ class ProfessionalDiskAnalyzer:
         self.root = root
         self.root.title("Disk Analyzer Pro - Умный кэш v2")
 
-        # Загружаем настройки
-        self.settings = SettingsManager("settings.json")
+        # ========== ИЗМЕНЕНИЕ: Настройки и кэш используют пути в Documents ==========
+        # Загружаем настройки (файл будет в Documents/DiskAnalyzer/settings.json)
+        self.settings = SettingsManager()  # Без аргумента — использует Documents
 
         # Применяем сохраненную геометрию окна
         geometry = self.settings.get('window_geometry', '1200x850')
@@ -39,8 +40,8 @@ class ProfessionalDiskAnalyzer:
 
         self.root.minsize(1000, 750)
 
-        # Используем умный кэш с SQLite (.db)
-        self.cache = SmartCacheManager("folder_cache.db")
+        # ========== ИЗМЕНЕНИЕ: Используем умный кэш с SQLite (.db) в Documents ==========
+        self.cache = SmartCacheManager()  # Без аргумента — использует Documents
 
         # Цветовая схема
         self.colors = {
@@ -75,12 +76,13 @@ class ProfessionalDiskAnalyzer:
         stats = self.cache.get_cache_stats()
         self.add_log("🚀 Программа запущена (частичное обновление кэша)", "highlight")
         self.add_log(f"💾 Кэш: {stats['total_entries']} записей, {stats['cache_size_mb']:.1f} МБ", "info")
+        self.add_log(f"📁 Файлы данных хранятся в: {get_app_data_path('DiskAnalyzer')}", "info")
         self.add_log(f"💻 Система: {sys.platform}", "info")
 
         # Проверяем, пустой ли кэш
         if stats['total_entries'] == 0:
-            cache_file_exists = os.path.exists("folder_cache.db")
-            cache_file_size = os.path.getsize("folder_cache.db") if cache_file_exists else 0
+            cache_file_exists = os.path.exists(self.cache.cache_file)
+            cache_file_size = os.path.getsize(self.cache.cache_file) if cache_file_exists else 0
 
             if cache_file_exists and cache_file_size > 0:
                 self.add_log("⚠️ Кэш повреждён или пуст, требуется пересканирование", "warning")
