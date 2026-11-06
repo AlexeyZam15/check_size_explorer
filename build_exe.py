@@ -43,6 +43,23 @@ EXCLUDED_MODULES = [
     'keyboard',
 ]
 
+# Явные hidden-import для всех модулей GUI-пакета (после разбиения gui.py
+# на миксины). Без этого на чистой машине frozen .exe может падать с
+# ModuleNotFoundError: src.gui_parts.collapsible и т.п.
+GUI_PARTS_MODULES = [
+    'src.gui_parts',
+    'src.gui_parts.styles',
+    'src.gui_parts.state',
+    'src.gui_parts.layout',
+    'src.gui_parts.results_tab',
+    'src.gui_parts.logs_tab',
+    'src.gui_parts.cache_tab',
+    'src.gui_parts.scan',
+    'src.gui_parts.drives_top',
+    'src.gui_parts.details',
+    'src.gui_parts.collapsible',
+]
+
 
 def clean_old_build():
     """Удаляет старые папки сборки"""
@@ -102,7 +119,6 @@ def build_exe():
 
     args.extend([
         '--noupx',
-        '--strip',
         '--log-level=ERROR',
     ])
 
@@ -113,30 +129,36 @@ def build_exe():
         '--add-data=src;src',
     ])
 
-    args.extend([
-        '--hidden-import=tkinter',
-        '--hidden-import=tkinter.ttk',
-        '--hidden-import=tkinter.scrolledtext',
-        '--hidden-import=sqlite3',
-        '--hidden-import=threading',
-        '--hidden-import=queue',
-        '--hidden-import=time',
-        '--hidden-import=json',
-        '--hidden-import=traceback',
-        '--hidden-import=re',
-        '--hidden-import=datetime',
-        '--hidden-import=pathlib',
-        '--hidden-import=shutil',
-        '--hidden-import=gc',
-        '--hidden-import=concurrent',
-        '--hidden-import=concurrent.futures',
-        '--hidden-import=psutil',
-        '--hidden-import=src',
-        '--hidden-import=src.cache_manager',
-        '--hidden-import=src.settings_manager',
-        '--hidden-import=src.gui',
-        '--hidden-import=src.utils',
-    ])
+    base_hidden = [
+        'tkinter',
+        'tkinter.ttk',
+        'tkinter.scrolledtext',
+        'sqlite3',
+        'threading',
+        'queue',
+        'time',
+        'json',
+        'traceback',
+        're',
+        'datetime',
+        'pathlib',
+        'shutil',
+        'gc',
+        'concurrent',
+        'concurrent.futures',
+        'psutil',
+        'src',
+        'src.cache_manager',
+        'src.settings_manager',
+        'src.gui',
+        'src.utils',
+    ]
+    for mod in base_hidden:
+        args.append(f'--hidden-import={mod}')
+
+    # Явные hidden-import для gui_parts (критично после разбиения gui.py)
+    for mod in GUI_PARTS_MODULES:
+        args.append(f'--hidden-import={mod}')
 
     args.extend([
         '--collect-all=psutil',
@@ -160,7 +182,7 @@ def build_exe():
         print("\n" + "=" * 60)
         print("✅ СБОРКА ЗАВЕРШЕНА УСПЕШНО!")
         print(f"📁 Готовый .exe: {OUTPUT_DIR}\\{APP_NAME}\\{APP_NAME}.exe")
-        print("📝 DEBUG-лог: {OUTPUT_DIR}\\{APP_NAME}\\debug.log (создаётся при запуске)")
+        print(f"📝 DEBUG-лог: {OUTPUT_DIR}\\{APP_NAME}\\debug.log (создаётся при запуске)")
         print("=" * 60)
     except Exception as e:
         print(f"\n❌ ОШИБКА СБОРКИ: {e}")
